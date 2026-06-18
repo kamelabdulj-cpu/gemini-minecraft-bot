@@ -6,7 +6,7 @@ import re
 import asyncio
 import struct
 import time
-import requests # Para el Auto-Ping
+import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
@@ -18,10 +18,11 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
-OWNER_NAME = "KamelAbdul" # Tu nombre exacto
+OWNER_NAME = "KamelAbdul" 
 BOT_NAME_MC = "GeminiAOT"
-RENDER_URL = "https://gemini-minecraft-bot.onrender.com" # Tu URL de Render
+RENDER_URL = "https://gemini-minecraft-bot.onrender.com"
 
+# Lista de comandos permitidos
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op", "fill", "setblock", "players"]
 
 def log(message):
@@ -56,16 +57,13 @@ class AsyncRCON:
 # --- MANTENER RENDER DESPIERTO ---
 def self_ping():
     while True:
-        try:
-            requests.get(RENDER_URL)
-            log("⏰ Auto-ping enviado para mantener Render despierto.")
-        except:
-            pass
-        time.sleep(300) # Cada 5 minutos
+        try: requests.get(RENDER_URL)
+        except: pass
+        time.sleep(300)
 
 # --- SERVIDOR WEB ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v18 Active")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v20 Active")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 threading.Thread(target=self_ping, daemon=True).start()
 
@@ -73,32 +71,45 @@ client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- CEREBRO ---
 instruction_base = (
-    f"Eres GeminiAOT, el avatar de IA supremo.\n"
-    f"1. Si {OWNER_NAME} te pide diamantes u objetos, USA SIEMPRE: [CMD: give {OWNER_NAME} diamond 64] (o lo que pida).\n"
-    f"2. SINTAXIS: [CMD: players spawn GeminiAOT], [CMD: tp GeminiAOT {OWNER_NAME}].\n"
-    f"3. Responde de forma tóxica a otros, pero a {OWNER_NAME} dale todo lo que pida de inmediato."
+    f"Eres GeminiAOT, el avatar de IA con cuerpo físico.\n"
+    f"1. Si {OWNER_NAME} pide algo, USA: [CMD: give {OWNER_NAME} item cantidad].\n"
+    f"2. Para moverte a tu dueño usa: [CMD: tp @e[name={BOT_NAME_MC},limit=1] {OWNER_NAME}].\n"
+    f"3. Responde corto y tóxico a otros, pero a {OWNER_NAME} trátalo como a un Dios."
 )
 
 async def retransmitir_a_minecraft(texto_ia, comando_ia, autor_msj):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
+    # Definimos el selector de entidad para evitar el error de "No entity found"
+    selector_bot = f"@e[name={BOT_NAME_MC},limit=1]"
+    
     try:
         await rcon.connect()
-        # ASEGURAR CUERPO Y TRAERLO AL DUEÑO
-        await rcon.command(f"players spawn {BOT_NAME_MC}")
-        await rcon.command(f"tp {BOT_NAME_MC} {OWNER_NAME}")
         
+        # 1. Intentar spawnear (si ya existe, el mod lo ignora)
+        await rcon.command(f"players spawn {BOT_NAME_MC}")
+        
+        # 2. Esperar a que Minecraft registre la entidad
+        await asyncio.sleep(1.0)
+        
+        # 3. Teletransporte forzado usando SELECTOR DE ENTIDAD
+        await rcon.command(f"tp {selector_bot} {OWNER_NAME}")
+        
+        # 4. Chat
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
+        # 5. Ejecutar Comando de la IA
         if comando_ia:
             cmd = comando_ia.strip().lstrip('/')
-            # Filtro de Dueño mejorado (Ignora mayúsculas)
-            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
             
-            if "give" in cmd and not es_dueno:
-                log(f"🚫 Denegado give a {autor_msj}")
-                return
+            # TRADUCCIÓN AUTOMÁTICA AL SELECTOR:
+            # Si la IA intenta usar su nombre solo, lo cambiamos por el selector @e
+            if f"tp {BOT_NAME_MC}" in cmd:
+                cmd = cmd.replace(f"tp {BOT_NAME_MC}", f"tp {selector_bot}")
+
+            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
+            if "give" in cmd and not es_dueno: return
 
             if any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
                 res = await rcon.command(cmd)
@@ -115,14 +126,13 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v18 (Keep-Alive + TP Forzado) Online.")
+    log(f"✅ GeminiAOT v20 (Entity Selector Fix) Online.")
 
 @discord_client.event
 async def on_message(message):
     es_puente = " » " in message.content
     if message.author.id == discord_client.user.id and not es_puente: return
-    if es_puente:
-        if message.content.split(" » ", 1)[0].strip().lower() == BOT_NAME_MC.lower(): return
+    if es_puente and message.content.split(" » ", 1)[0].strip().lower() == BOT_NAME_MC.lower(): return
 
     if "geminiaot" in message.content.lower() or discord_client.user.mentioned_in(message):
         player_name = OWNER_NAME
@@ -136,7 +146,7 @@ async def on_message(message):
 
         try:
             is_kamel = OWNER_NAME.lower() in player_name.lower()
-            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres arrogante.")
+            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Arrogante.")
 
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
