@@ -36,12 +36,12 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-    # Evitar bucles (no responderse a sí mismo)
-    if message.author == client.user:
+    # Solo evitamos responder si el ID del autor es EXACTAMENTE el del bot para no hacer bucles
+    if message.author.id == client.user.id:
         return
 
-    # Responder si etiquetan al bot o escriben su nombre en el texto (desde Minecraft)
-    if client.user.mentioned_in(message) or "geminiaot" in message.content.lower():
+    # Buscar la palabra clave ignorando si viene de usuario, bot o webhook de Minecraft
+    if "geminiaot" in message.content.lower():
         
         # 1. Pasamos todo el texto a minúsculas y limpiamos las menciones
         clean_prompt = message.content.lower().replace(f'<@!{client.user.id}>', '').replace(f'<@{client.user.id}>', '')
@@ -60,5 +60,6 @@ async def on_message(message):
         except Exception as e:
             print(f"Error con Gemini: {e}")
             await message.channel.send("Se me rompió el cerebro. Inténtalo de nuevo más tarde.")
+
 
 client.run(DISCORD_TOKEN)
