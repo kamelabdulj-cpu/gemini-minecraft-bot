@@ -99,4 +99,5 @@ async def on_message(message):
             else:
                 await message.channel.send(f"Error: `{error_msg[:100]}`")
 
-if __name__ == "__m
+if __name__ == "__main__":
+    client.run(DISCORD_TOKEN)
