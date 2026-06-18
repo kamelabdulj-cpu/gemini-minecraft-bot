@@ -5,13 +5,14 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
+from mcrcon import MCRcon # Nueva librería para Minecraft
 
-# --- FORZAR LOGS ---
+# --- LOGS CONFIG ---
 def log(message):
     print(message, flush=True)
     sys.stdout.flush()
 
-# --- SERVIDOR WEB ---
+# --- SERVIDOR WEB PARA RENDER ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers()
@@ -26,89 +27,109 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN APIS ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Configuración RCON
+RCON_IP = os.getenv("34.186.32.18")
+RCON_PASS = os.getenv("16827131")
+RCON_PORT = int(os.getenv("RCON_PORT", 25575))
+
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- DETECCIÓN DE MODELO LITE (Para evitar 503) ---
-def get_lite_model():
-    log("🔍 Buscando modelos Lite para evitar saturación...")
+# --- SELECCIÓN DE MODELO ---
+def get_working_model():
+    log("🔍 Buscando modelos disponibles...")
     try:
         available = [m.name for m in client_gemini.models.list()]
-        
-        # Prioridad a los modelos LITE (soportan más carga)
-        priorities = [
-            "models/gemini-3.1-flash-lite", 
-            "models/gemini-flash-lite-latest",
-            "models/gemini-2.0-flash-lite",
-            "models/gemini-2.5-flash-lite",
-            "models/gemini-1.5-flash" # Última opción si no hay Lite
-        ]
-        
+        # Priorizamos Lite para evitar el error 503 de saturación
+        priorities = ["models/gemini-3.1-flash-lite", "models/gemini-2.0-flash-lite", "models/gemini-1.5-flash"]
         for p in priorities:
             if p in available:
-                log(f"⭐ Modelo elegido por estabilidad: {p}")
+                log(f"⭐ Modelo seleccionado: {p}")
                 return p
         return available[0]
     except Exception as e:
         log(f"❌ Error listando: {e}")
-        return "models/gemini-flash-lite-latest"
+        return "models/gemini-3.1-flash-lite"
 
-SELECTED_MODEL = get_lite_model()
+SELECTED_MODEL = get_working_model()
 
-# --- PERSONALIDAD ---
-instruction_base = "Conocimiento de Minecraft 1.21.1 "
-personality_normal = instruction_base + "Eres GeminiAOT, un bot tóxico y sarcástico. Responde corto."
-personality_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres amable y fiel."
+# --- PERSONALIDADES ---
+instruction_base = "Conocimiento total de crafteo Minecraft 1.21. "
+personality_normal = instruction_base + "Eres GeminiAOT, bot de Minecraft tóxico, sarcástico y arrogante. Responde corto y borde."
+personality_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres amable, cariñoso y fiel. Es tu rey."
 
 safety_config = [
     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
 ]
 
-# --- DISCORD ---
+# --- DISCORD BOT ---
 intents = discord.Intents.default()
 intents.message_content = True
 discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ Bot online | Modelo: {SELECTED_MODEL}")
+    log(f"✅ Bot Online: {discord_client.user} | Modelo: {SELECTED_MODEL}")
 
 @discord_client.event
 async def on_message(message):
-    if message.author.id == discord_client.user.id: return
+    # Ignorar mensajes propios
+    if message.author.id == discord_client.user.id:
+        return
     
     full_text = message.content.lower()
+    
+    # Detectar si nos hablan
     if "geminiaot" in full_text or discord_client.user.mentioned_in(message):
+        # Limpiar el nombre del jugador y el prompt
         clean_prompt = message.content.lower().split(" » ", 1)[-1] if " » " in message.content else message.content
         clean_prompt = clean_prompt.replace('geminiaot', '').strip()
         
         if not clean_prompt: return
 
         try:
+            # Seleccionar personalidad
             is_kamel = "kamel" in full_text or "kamelabdul" in message.author.name.lower()
             sys_msg = personality_kamel if is_kamel else personality_normal
 
+            # Generar respuesta con Gemini
             response = client_gemini.models.generate_content(
                 model=SELECTED_MODEL,
                 contents=clean_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=sys_msg,
                     safety_settings=safety_config,
-                    max_output_tokens=250, # Reducido para mayor velocidad
+                    max_output_tokens=300,
                 ),
             )
 
             if response.text:
-                await message.channel.send(response.text[:2000])
-            else:
-                await message.channel.send("No tengo ganas de hablar.")
+                respuesta_final = response.text[:2000]
+                
+                # 1. ENVIAR A DISCORD
+                await message.channel.send(respuesta_final)
+                log(f"✉️ Enviado a Discord: {respuesta_final}")
+
+                # 2. ENVIAR A MINECRAFT VÍA RCON
+                if RCON_IP and RCON_PASS:
+                    try:
+                        with MCRcon(RCON_IP, RCON_PASS, port=RCON_PORT) as mcr:
+                            # Formateamos el mensaje para que se vea bien en Minecraft
+                            # El comando 'say' es el más sencillo, 'tellraw' es para expertos
+                            mcr.command(f'say [GeminiAOT] {respuesta_final}')
+                            log("🎮 Retransmitido a Minecraft vía RCON")
+                    except Exception as re:
+                        log(f"⚠️ Error RCON: {re}")
+                else:
+                    log("⚠️ RCON no configurado. Solo se envió a Discord.")
 
         except Exception as e:
-            log(f"❌ Error: {e}")
-            await message.channel.send("⚠️ Los servidores de Google están saturados. Reintenta en 10 segundos.")
+            log(f"❌ Error General: {e}")
+            await message.channel.send("Tengo un problema en mi cerebro. Reintenta.")
 
 if __name__ == "__main__":
     discord_client.run(DISCORD_TOKEN)
