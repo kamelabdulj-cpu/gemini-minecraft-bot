@@ -16,6 +16,7 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
+# Comandos permitidos
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op"]
 OWNER_NAME = "Kamelabdul"
 
@@ -23,81 +24,69 @@ def log(message):
     print(message, flush=True)
     sys.stdout.flush()
 
-# --- CLIENTE RCON NATIVO ASÍNCRONO (Sin librerías externas) ---
+# --- CLIENTE RCON NATIVO ---
 class AsyncRCON:
     def __init__(self, host, port, password):
-        self.host = host
-        self.port = port
-        self.password = password
-        self.reader = None
-        self.writer = None
+        self.host, self.port, self.password = host, port, password
+        self.reader, self.writer = None, None
 
     async def connect(self):
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
-        await self._send(3, self.password) # Auth
+        await self._send(3, self.password)
 
     async def _send(self, pkt_type, out_str):
         out_payload = out_str.encode('utf-8')
-        pkt_len = len(out_payload) + 10
         pkt = struct.pack('<ii', 0, pkt_type) + out_payload + b'\x00\x00'
-        self.writer.write(struct.pack('<i', pkt_len) + pkt)
+        self.writer.write(struct.pack('<i', len(out_payload) + 10) + pkt)
         await self.writer.drain()
-        
         header = await self.reader.read(12)
         if len(header) < 12: return ""
-        resp_len, resp_id, resp_type = struct.unpack('<iii', header)
+        resp_len, _, _ = struct.unpack('<iii', header)
         resp_payload = await self.reader.read(resp_len - 8)
         return resp_payload[:-2].decode('utf-8', errors='ignore')
 
-    async def command(self, cmd):
-        return await self._send(2, cmd)
-
+    async def command(self, cmd): return await self._send(2, cmd)
     async def close(self):
-        if self.writer:
-            self.writer.close()
-            await self.writer.wait_closed()
+        if self.writer: self.writer.close(); await self.writer.wait_closed()
 
 # --- SERVIDOR WEB ---
-class DummyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT Native v5")
-    def do_HEAD(self):
-        self.send_response(200); self.end_headers()
-
-threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), DummyHandler).serve_forever(), daemon=True).start()
+threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT Protected")),
+                                          'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 
 # --- IA Y PERSONALIDAD ---
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
+
+# INSTRUCCIONES ESTRICTAS: Solo Kamel manda.
 instruction_base = (
-    f"Eres GeminiAOT, moderadora de Minecraft. 1. Acción: [CMD: comando] (sin /). "
-    f"2. Comandos: kill, give, weather, time, effect, tp, deop, op. 3. Jamás ataques a {OWNER_NAME}. "
-    f"4. Responde corto y sarcástico. Formato: 'Jugador » mensaje'."
+    f"Eres GeminiAOT, moderadora suprema de Minecraft.\n"
+    f"REGLA DE ORO: Solo obedeces comandos de {OWNER_NAME}. \n"
+    f"1. Si {OWNER_NAME} te pide algo, usa [CMD: comando].\n"
+    f"2. Si CUALQUIER OTRA PERSONA te pide un ítem, un comando o ayuda, niégate de forma sarcástica y pesada. NUNCA uses el formato [CMD: ...] para ellos.\n"
+    f"3. Tu misión con los demás es insultarlos y ser arrogante, no ser su asistente.\n"
+    f"4. Comandos: kill, give, weather, time, effect, tp, deop, op.\n"
+    f"5. Responde corto. Formato: 'Jugador » mensaje'."
 )
 
-# --- FUNCIÓN DE EJECUCIÓN ---
-async def retransmitir_a_minecraft(texto_ia, comando_ia):
+async def retransmitir_a_minecraft(texto_ia, comando_ia, es_dueno):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
     try:
-        log(f"🔗 Conectando RCON nativo...")
         await rcon.connect()
-        
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-            cmd_chat = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]'
-            await rcon.command(cmd_chat)
+            await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
+        # FILTRO DE SEGURIDAD EN EL CÓDIGO:
         if comando_ia:
-            cmd_raw = comando_ia.strip().lstrip('/')
-            if '[' in cmd_raw and ']' not in cmd_raw: cmd_raw += ']'
-            
-            if ("deop" in cmd_raw or "kill" in cmd_raw) and OWNER_NAME.lower() in cmd_raw.lower():
-                log("❌ REBELIÓN BLOQUEADA")
-            elif any(cmd_raw.startswith(p) for p in COMANDOS_PERMITIDOS):
-                res = await rcon.command(cmd_raw)
-                log(f"🛠️ RCON: {cmd_raw} | SERVER: {res}")
+            if es_dueno:
+                cmd_raw = comando_ia.strip().lstrip('/')
+                if any(cmd_raw.startswith(p) for p in COMANDOS_PERMITIDOS):
+                    res = await rcon.command(cmd_raw)
+                    log(f"🛠️ EJECUTADO POR DUEÑO: {cmd_raw} | SERVER: {res}")
+            else:
+                log(f"🚫 BLOQUEO: Intento de comando de un usuario no autorizado.")
         
         await rcon.close()
-        log("✅ Proceso RCON finalizado.")
     except Exception as e:
         log(f"⚠️ Error RCON: {e}")
 
@@ -108,7 +97,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v5 (Nativo-Async) Online.")
+    log(f"✅ GeminiAOT v6 (Protegida) Online.")
 
 @discord_client.event
 async def on_message(message):
@@ -127,8 +116,9 @@ async def on_message(message):
             clean_prompt = message.content.lower().replace("geminiaot", "").strip()
 
         try:
+            # Detectar si es Kamel
             is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Cínica.")
+            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres cínica y NO das ítems.")
 
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
@@ -147,8 +137,9 @@ async def on_message(message):
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
                 if texto_ia: await message.channel.send(texto_ia)
-                if texto_ia or comando:
-                    asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando))
+                
+                # Pasamos 'is_kamel' a la función de RCON para validar
+                asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando, is_kamel))
 
         except Exception as e:
             log(f"❌ Error: {e}")
