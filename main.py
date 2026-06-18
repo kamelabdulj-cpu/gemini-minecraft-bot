@@ -61,9 +61,9 @@ async def on_message(message):
                 clean_prompt = "".join([c if c.isalnum() or c in " ?.!" else " " for c in clean_prompt])
                 
                 if "kamel" in full_text or "kamelabdul" in message.author.name.lower():
-                    model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction_kamel)
+                    model = genai.GenerativeModel("models/gemini-1.5-flash", system_instruction=system_instruction_kamel)
                 else:
-                    model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction_normal)
+                    model = genai.GenerativeModel("models/gemini-1.5-flash", system_instruction=system_instruction_normal)
 
                 response = model.generate_content(clean_prompt)
                 await message.channel.send(response.text)
