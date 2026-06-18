@@ -70,6 +70,7 @@ async def on_message(message):
                 
             except Exception as e:
                 print(f"ERROR FINAL: {e}")
-                await message.channel.send("Tengo problemas técnicos, intenta luego.")
+                # Aquí el bot te dirá el error técnico real en Discord
+                await message.channel.send(f"Error técnico: {e}")
 
 client.run(DISCORD_TOKEN)
