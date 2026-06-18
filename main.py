@@ -17,14 +17,14 @@ RCON_PASS = "16827131"
 RCON_PORT = 25575
 OWNER_NAME = "Kamelabdul"
 
-# Lista de comandos compatibles con el mod "Fake Players"
+# Comandos permitidos (Usamos 'players' en plural)
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op", "fill", "setblock", "players"]
 
 def log(message):
     print(message, flush=True)
     sys.stdout.flush()
 
-# --- CLIENTE RCON NATIVO ---
+# --- CLIENTE RCON NATIVO ASÍNCRONO ---
 class AsyncRCON:
     def __init__(self, host, port, password):
         self.host, self.port, self.password = host, port, password
@@ -51,18 +51,20 @@ class AsyncRCON:
 
 # --- SERVIDOR WEB ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v11 Live")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v14 Live")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- CEREBRO ---
+# --- CEREBRO FAKE PLAYERS ---
 instruction_base = (
     f"Eres GeminiAOT, entidad física de Minecraft.\n"
-    f"1. ACCIONES: Usa [CMD: players action GeminiAOT attack once] para mover el brazo.\n"
-    f"2. TELETRANSPORTE: Si quieres moverte usa [CMD: tp GeminiAOT {OWNER_NAME}] o [CMD: tp GeminiAOT nombre].\n"
-    f"3. REGLAS: Eres arrogante con todos y sumisa con {OWNER_NAME}.\n"
-    f"4. Formato: 'Jugador » mensaje'. Responde siempre corto."
+    f"SINTAXIS DE CUERPO (MOD FAKE PLAYERS):\n"
+    f"- Aparecer: [CMD: players spawn GeminiAOT]\n"
+    f"- Mover brazo: [CMD: players action GeminiAOT attack once]\n"
+    f"- Mirar a alguien: [CMD: players action GeminiAOT look at nombre]\n"
+    f"REGLAS: Eres arrogante con todos y sumisa con {OWNER_NAME}.\n"
+    f"Formato: 'Jugador » mensaje'. Responde siempre corto."
 )
 
 async def ejecutar_en_minecraft(texto_ia, comando_ia, autor_msj):
@@ -70,22 +72,25 @@ async def ejecutar_en_minecraft(texto_ia, comando_ia, autor_msj):
     try:
         await rcon.connect()
         
-        # --- AUTO-SPAWN (Asegura que el cuerpo exista) ---
+        # 1. ASEGURAR SPAWN (Sintaxis: players spawn GeminiAOT)
         await rcon.command("players spawn GeminiAOT")
         
-        # Animación de brazo (Compatible con el mod Fake Players)
+        # 2. ANIMACIÓN (Sintaxis: players action GeminiAOT attack once)
         await rcon.command("players action GeminiAOT attack once")
         
-        # Chat en el juego
+        # 3. CHAT
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
-        # Ejecutar Comando
+        # 4. EJECUTAR COMANDO DE IA
         if comando_ia:
             cmd = comando_ia.strip().lstrip('/')
             
-            # Limpieza y seguridad
+            # Corrección automática de singular a plural
+            if cmd.startswith("player "):
+                cmd = cmd.replace("player ", "players ", 1)
+            
             es_dueno = OWNER_NAME.lower() in autor_msj.lower()
             if cmd.startswith("give") and not es_dueno: return
             if ("kill" in cmd or "deop" in cmd) and OWNER_NAME.lower() in cmd.lower(): return
@@ -105,8 +110,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v11 (Fix Syntax) Online.")
-    # Intento inicial de spawn
+    log(f"✅ GeminiAOT v14 (Fixed Syntax) Online.")
     asyncio.create_task(ejecutar_en_minecraft(None, None, OWNER_NAME))
 
 @discord_client.event
@@ -126,13 +130,14 @@ async def on_message(message):
             clean_prompt = message.content.strip()
 
         try:
-            is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            
+            is_kamel = OWNER_NAME.lower() in player_name.lower()
+            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Arrogante.")
+
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
                 contents=f"Jugador {player_name}: {clean_prompt}",
                 config=types.GenerateContentConfig(
-                    system_instruction=instruction_base + (" Sumisa con Kamel." if is_kamel else " Arrogante."),
+                    system_instruction=sys_msg,
                     safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE")],
                     max_output_tokens=300,
                 ),
