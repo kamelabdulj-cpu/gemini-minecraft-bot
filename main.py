@@ -3,6 +3,7 @@ import discord
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # --- SERVIDOR WEB PARA RENDER ---
 class DummyHandler(BaseHTTPRequestHandler):
@@ -10,9 +11,6 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot activo")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -27,8 +25,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- PERSONALIDADES Y MODELOS ---
-# Se definen aquí para no recrearlos en cada mensaje (evita errores 404 y lentitud)
+# --- CONFIGURACIÓN DE SEGURIDAD (IMPORTANTE) ---
+# Esto permite que el bot sea "tóxico" sin que Google bloquee la respuesta
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
 
 instruction_base = (
     "Tienes conocimiento total de recetas de crafteo de Minecraft 1.21. "
@@ -44,18 +48,20 @@ system_instruction_normal = (
 system_instruction_kamel = (
     instruction_base +
     "Eres GeminiAOT, un bot asistente de Minecraft. Con Kamel eres increíblemente amable, "
-    "cariñoso y fiel. Trátalo como a un rey, él es tu creador y dueño."
+    "cariñoso y fiel. Trátalo como a un rey."
 )
 
-# Inicializamos los modelos (Usamos 'gemini-1.5-flash' que es la versión más estable)
+# Inicializamos modelos con filtros desactivados
 model_normal = genai.GenerativeModel(
     model_name="gemini-1.5-flash",
-    system_instruction=system_instruction_normal
+    system_instruction=system_instruction_normal,
+    safety_settings=safety_settings
 )
 
 model_kamel = genai.GenerativeModel(
     model_name="gemini-1.5-flash",
-    system_instruction=system_instruction_kamel
+    system_instruction=system_instruction_kamel,
+    safety_settings=safety_settings
 )
 
 # --- CONFIGURACIÓN DE DISCORD ---
@@ -65,20 +71,18 @@ client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
-    print(f"✅ Bot encendido exitosamente como: {client.user}")
+    print(f"✅ Bot listo: {client.user}")
 
 @client.event
 async def on_message(message):
-    # Evitar que el bot se responda a sí mismo
     if message.author.id == client.user.id:
         return
 
     full_text = message.content.lower()
     
-    # Detectar si mencionan al bot o su nombre
     if "geminiaot" in full_text or client.user.mentioned_in(message):
         
-        # Limpiar el texto del mensaje (quitar prefijos de servidores de Minecraft)
+        # Limpieza de prompt
         clean_prompt = message.content.lower().split(" » ", 1)[-1] if " » " in message.content else message.content
         clean_prompt = clean_prompt.replace('geminiaot', '').strip()
 
@@ -86,29 +90,31 @@ async def on_message(message):
             return
 
         try:
-            # Seleccionar la personalidad
-            # Si el autor es Kamel o se menciona a Kamel
+            # Seleccionar modelo
             if "kamel" in full_text or "kamelabdul" in message.author.name.lower():
                 selected_model = model_kamel
             else:
                 selected_model = model_normal
 
-            # Generar respuesta usando la API de Gemini
+            # Generar contenido con manejo de error específico de respuesta vacía
             response = selected_model.generate_content(clean_prompt)
             
-            # Enviar la respuesta a Discord
             if response.text:
-                # Discord tiene un límite de 2000 caracteres por mensaje
                 await message.channel.send(response.text[:2000])
+            else:
+                await message.channel.send("Mi cerebro bloqueó esa respuesta por ser demasiado turbia.")
                 
         except Exception as e:
-            print(f"❌ ERROR: {e}")
-            # Si el error es el 404, imprimirá el detalle exacto en los logs de Render
-            await message.channel.send("Tengo un error en mi núcleo lógico. Intenta de nuevo más tarde.")
+            error_str = str(e)
+            print(f"❌ ERROR: {error_str}")
+            
+            # Esto te ayudará a saber qué pasa exactamente desde el chat de Discord
+            if "API_KEY_INVALID" in error_str:
+                await message.channel.send("Error: La API KEY de Gemini está mal configurada.")
+            elif "quota" in error_str.lower():
+                await message.channel.send("Error: Me he quedado sin créditos gratis por hoy.")
+            else:
+                await message.channel.send(f"Error técnico detallado: `{error_str[:100]}`")
 
-# Iniciar el bot
 if __name__ == "__main__":
-    if DISCORD_TOKEN:
-        client.run(DISCORD_TOKEN)
-    else:
-        print("❌ ERROR: No se encontró DISCORD_TOKEN en las variables de entorno.")
+    client.run(DISCORD_TOKEN)
