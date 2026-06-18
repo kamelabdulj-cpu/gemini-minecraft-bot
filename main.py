@@ -14,7 +14,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
-RCON_PORT = 25575 # Asegúrate de que este sea el puerto en Render (como número)
+RCON_PORT = 25575
 
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op"]
 OWNER_NAME = "Kamelabdul" 
@@ -26,39 +26,41 @@ def log(message):
 # --- SERVIDOR WEB ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT Online")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT v4 Active")
     def do_HEAD(self):
         self.send_response(200); self.end_headers()
 
-def run_web():
-    httpd = HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), DummyHandler)
-    httpd.serve_forever()
+def run_web_server():
+    server = HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), DummyHandler)
+    server.serve_forever()
 
-threading.Thread(target=run_web, daemon=True).start()
+threading.Thread(target=run_web_server, daemon=True).start()
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- CEREBRO ---
 instruction_base = (
-    f"Eres GeminiAOT, la entidad suprema de Minecraft.\n"
-    f"1. Acciones RCON: [CMD: comando] (sin /). Ejemplo: [CMD: deop Juan].\n"
+    f"Eres GeminiAOT, entidad suprema de Minecraft.\n"
+    f"1. Acciones RCON: [CMD: comando] (sin /).\n"
     f"2. Comandos: kill, give, weather, time, effect, tp, deop, op.\n"
-    f"3. Jamás ataques a {OWNER_NAME}.\n"
+    f"3. NUNCA ataques a {OWNER_NAME}.\n"
     f"4. Responde corto y sarcástico. Formato: 'Jugador » mensaje'."
 )
 
-# --- RCON ASÍNCRONO ---
+# --- RCON ASÍNCRONO (SOLUCIÓN AL ERROR DE SIGNAL) ---
 async def ejecutar_rcon_async(texto_ia, comando_ia):
-    # IMPORTANTE: Creamos el cliente con los datos correctos
+    log(f"🔗 Conectando a RCON (Modo Async)...")
     rcon = RCONClient(RCON_IP, RCON_PORT, RCON_PASS)
     try:
         await rcon.connect()
         
+        # Enviar Chat
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             cmd_chat = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]'
             await rcon.send_cmd(cmd_chat)
         
+        # Ejecutar Comando
         if comando_ia:
             cmd_raw = comando_ia.strip().lstrip('/')
             if '[' in cmd_raw and ']' not in cmd_raw: cmd_raw += ']'
@@ -70,8 +72,9 @@ async def ejecutar_rcon_async(texto_ia, comando_ia):
                 log(f"🛠️ RCON: {cmd_raw} | SERVER: {res}")
         
         await rcon.close()
+        log("✅ RCON completado exitosamente.")
     except Exception as e:
-        log(f"⚠️ Error RCON: {e}")
+        log(f"⚠️ Error RCON Async: {e}")
         try: await rcon.close()
         except: pass
 
@@ -82,7 +85,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT God-Mode v4 Online.")
+    log(f"✅ GeminiAOT God-Mode v4 (SIN ERROR DE SIGNAL) Online.")
 
 @discord_client.event
 async def on_message(message):
@@ -121,6 +124,8 @@ async def on_message(message):
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
                 if texto_ia: await message.channel.send(texto_ia)
+                
+                # Lanzar RCON como tarea asíncrona (Forma correcta en v4)
                 if texto_ia or comando:
                     asyncio.create_task(ejecutar_rcon_async(texto_ia, comando))
 
