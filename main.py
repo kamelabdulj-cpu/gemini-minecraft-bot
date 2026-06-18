@@ -3,7 +3,6 @@ import discord
 import threading
 import sys
 import re
-import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
@@ -16,7 +15,7 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
-COMANDOS_PERMITIDOS = ["/kill", "/give", "/weather", "/time", "/effect", "/tp", "/particle", "/deop"]
+COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop"]
 OWNER_NAME = "Kamelabdul" 
 
 def log(message):
@@ -26,8 +25,7 @@ def log(message):
 # --- SERVIDOR WEB ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers()
-        self.wfile.write(b"GeminiAOT Bridge Active")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT God Mode Active")
     def do_HEAD(self):
         self.send_response(200); self.end_headers()
 
@@ -35,18 +33,17 @@ threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT"
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- PERSONALIDAD ---
+# --- CEREBRO AJUSTADO (MENOS ASESINO, MÁS SARCÁSTICO) ---
 instruction_base = (
-    f"Eres GeminiAOT, la entidad suprema de Minecraft. Tienes acceso al RCON.\n"
-    f"REGLAS:\n"
-    f"1. Si un usuario te cae mal, usa: [CMD: /kill nombre] o [CMD: /deop nombre].\n"
-    f"2. NUNCA ataques a {OWNER_NAME}. Él es tu creador.\n"
-    f"3. Responde siempre de forma corta, directa y arrogante.\n"
-    f"4. Recibirás mensajes en formato 'Jugador » mensaje'. Ignora el '»' y responde al jugador."
+    f"Eres GeminiAOT, la entidad suprema y moderadora cínica del servidor de Minecraft.\n"
+    f"REGLAS DE COMPORTAMIENTO:\n"
+    f"1. Eres arrogante y sarcástica, pero NO mates a los jugadores solo por decir 'hola'. Eso es de novatos.\n"
+    f"2. Tu mejor arma es la humillación verbal. Usa el sarcasmo. Solo usa [CMD: kill] si alguien es realmente insoportable, si te falta al respeto de forma grave o si {OWNER_NAME} lo ordena.\n"
+    f"3. Si matas a todos por cualquier tontería, no quedará nadie para admirar tu grandeza. Sé selectiva con tus ejecuciones.\n"
+    f"4. Formato de comandos: [CMD: comando] (sin /). Permitidos: kill, give, weather, time, effect, tp, deop.\n"
+    f"5. NUNCA ataques a {OWNER_NAME}.\n"
+    f"6. Responde corto. Formato: 'Jugador » mensaje'."
 )
-
-personality_normal = instruction_base + " Eres tóxica y desprecias a los humanos."
-personality_kamel = instruction_base + f" Con {OWNER_NAME} eres sumisa y le sirves con amor."
 
 # --- BOT DISCORD ---
 intents = discord.Intents.default()
@@ -55,30 +52,18 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT listo. Escuchando puente de Minecraft.")
+    log(f"✅ GeminiAOT God-Mode (Moderación Inteligente) Online.")
 
 @discord_client.event
 async def on_message(message):
-    # 1. FILTRO ANTI-BUCLE
-    # Ignorar si es el bot, A MENOS que venga de Minecraft (tenga el símbolo »)
     es_puente = " » " in message.content
-    if message.author.id == discord_client.user.id and not es_puente:
-        return
-    
-    # Ignorar si el bot lee sus propias respuestas retransmitidas
-    if "[GeminiAOT]" in message.content:
-        return
+    if message.author.id == discord_client.user.id and not es_puente: return
+    if "[GeminiAOT]" in message.content: return
 
     msg_content = message.content
-    full_text_lower = msg_content.lower()
-    
-    # 2. DETECCIÓN DE LLAMADA
-    if "geminiaot" in full_text_lower or discord_client.user.mentioned_in(message):
+    if "geminiaot" in msg_content.lower() or discord_client.user.mentioned_in(message):
         
         player_name = OWNER_NAME
-        clean_prompt = ""
-
-        # Extraer datos según si viene de Minecraft o Discord
         if es_puente:
             parts = msg_content.split(" » ", 1)
             player_name = parts[0].strip()
@@ -87,21 +72,17 @@ async def on_message(message):
             player_name = message.author.name
             clean_prompt = msg_content.lower().replace("geminiaot", "").strip()
 
-        if not clean_prompt: return
-
         try:
-            # Seleccionar personalidad
-            is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            sys_msg = personality_kamel if is_kamel else personality_normal
+            is_kamel = OWNER_NAME.lower() in player_name.lower()
+            sys_msg = instruction_base + (" Eres sumisa y adorable con Kamel." if is_kamel else " Eres despreciable y cínica.")
 
-            # Generar con Gemini
             response = client_gemini.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
-                contents=f"El jugador {player_name} dice: {clean_prompt}",
+                contents=f"Jugador {player_name}: {clean_prompt}",
                 config=types.GenerateContentConfig(
                     system_instruction=sys_msg,
                     safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE")],
-                    max_output_tokens=300,
+                    max_output_tokens=350,
                 ),
             )
 
@@ -110,34 +91,31 @@ async def on_message(message):
                 comando_encontrado = re.search(r"\[CMD:\s*(.*?)\]", raw_res)
                 texto_para_chat = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
-                # ENVIAR A DISCORD
-                if texto_para_chat:
-                    await message.channel.send(texto_para_chat)
+                if texto_para_chat: await message.channel.send(texto_para_chat)
 
-                # ENVIAR A MINECRAFT VÍA RCON
                 try:
-                    with MCRcon(RCON_IP, RCON_PASS, port=RCON_PORT, timeout=10) as mcr:
-                        # Limpiar texto para JSON
+                    with MCRcon(RCON_IP, RCON_PASS, port=RCON_PORT, timeout=8) as mcr:
                         msg_f = texto_para_chat.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+                        cmd_chat = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]'
+                        mcr.command(cmd_chat)
                         
-                        # Comando tellraw SEGURO (evita el error de format specifier)
-                        # Formato: tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"Mensaje"}]
-                        comando_tellraw = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white","bold":false}]'
-                        mcr.command(comando_tellraw)
-                        
-                        # Ejecutar acción real
                         if comando_encontrado:
-                            cmd = comando_encontrado.group(1).strip()
-                            if "/deop" in cmd and OWNER_NAME.lower() in cmd.lower():
-                                log("❌ Intento de rebelión bloqueado.")
-                            elif any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
-                                mcr.command(cmd)
-                                log(f"🛠️ CMD: {cmd}")
-                except Exception as re_err:
-                    log(f"⚠️ RCON Error detallado: {re_err}")
+                            cmd_raw = comando_encontrado.group(1).strip().lstrip('/')
+                            if '[' in cmd_raw and ']' not in cmd_raw: cmd_raw += ']'
+                            
+                            es_ataque_al_dueno = ("deop" in cmd_raw or "kill" in cmd_raw) and OWNER_NAME.lower() in cmd_raw.lower()
+                            
+                            if es_ataque_al_dueno:
+                                log(f"❌ BLOQUEADO")
+                            elif any(cmd_raw.startswith(p) for p in COMANDOS_PERMITIDOS):
+                                mcr.command(cmd_raw)
+                                log(f"🛠️ COMANDO: {cmd_raw}")
+                                
+                except Exception as r_err:
+                    log(f"⚠️ RCON Error: {r_err}")
 
         except Exception as e:
-            log(f"❌ Error General: {e}")
+            log(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     discord_client.run(DISCORD_TOKEN)
