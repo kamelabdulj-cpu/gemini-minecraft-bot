@@ -3,6 +3,7 @@ import discord
 import threading
 import sys
 import re
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
@@ -54,31 +55,31 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT escuchando Minecraft y Discord.")
+    log(f"✅ GeminiAOT listo. Escuchando puente de Minecraft.")
 
 @discord_client.event
 async def on_message(message):
-    # --- FILTRO ANTI-BUCLE ---
-    # Si el mensaje lo envió el bot PERO NO tiene el símbolo de puente " » ", lo ignoramos.
-    # Esto permite que el bot lea los mensajes que vienen de Minecraft pero no sus propias respuestas.
-    if message.author.id == discord_client.user.id and " » " not in message.content:
+    # 1. FILTRO ANTI-BUCLE
+    # Ignorar si es el bot, A MENOS que venga de Minecraft (tenga el símbolo »)
+    es_puente = " » " in message.content
+    if message.author.id == discord_client.user.id and not es_puente:
         return
     
-    # Si el mensaje es una respuesta propia del bot que ya pasó por el puente, la ignoramos para evitar el bucle infinito.
+    # Ignorar si el bot lee sus propias respuestas retransmitidas
     if "[GeminiAOT]" in message.content:
         return
 
     msg_content = message.content
     full_text_lower = msg_content.lower()
     
-    # --- DETECCIÓN DE MENSAJE ---
+    # 2. DETECCIÓN DE LLAMADA
     if "geminiaot" in full_text_lower or discord_client.user.mentioned_in(message):
         
-        # Extraer nombre del jugador y el mensaje limpio
-        # Formato esperado: "KamelAbdul » geminiaot hola"
-        player_name = OWNER_NAME # Por defecto
-        
-        if " » " in msg_content:
+        player_name = OWNER_NAME
+        clean_prompt = ""
+
+        # Extraer datos según si viene de Minecraft o Discord
+        if es_puente:
             parts = msg_content.split(" » ", 1)
             player_name = parts[0].strip()
             clean_prompt = parts[1].lower().replace("geminiaot", "").strip()
@@ -89,11 +90,11 @@ async def on_message(message):
         if not clean_prompt: return
 
         try:
-            # Seleccionar personalidad (Detectamos si es Kamel por el nombre en Discord o en el puente)
+            # Seleccionar personalidad
             is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
             sys_msg = personality_kamel if is_kamel else personality_normal
 
-            # IA Generación
+            # Generar con Gemini
             response = client_gemini.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
                 contents=f"El jugador {player_name} dice: {clean_prompt}",
@@ -109,31 +110,34 @@ async def on_message(message):
                 comando_encontrado = re.search(r"\[CMD:\s*(.*?)\]", raw_res)
                 texto_para_chat = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
-                # 1. Enviar a Discord
+                # ENVIAR A DISCORD
                 if texto_para_chat:
                     await message.channel.send(texto_para_chat)
 
-                # 2. Enviar a Minecraft vía RCON
+                # ENVIAR A MINECRAFT VÍA RCON
                 try:
                     with MCRcon(RCON_IP, RCON_PASS, port=RCON_PORT, timeout=10) as mcr:
-                        # Enviar mensaje al chat
+                        # Limpiar texto para JSON
                         msg_f = texto_para_chat.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-                        mcr.command(f'tellraw @a {{"text":"","extra":[{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"{msg_f}","color":"white"}]}}')
                         
-                        # Ejecutar comando si existe
+                        # Comando tellraw SEGURO (evita el error de format specifier)
+                        # Formato: tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"Mensaje"}]
+                        comando_tellraw = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white","bold":false}]'
+                        mcr.command(comando_tellraw)
+                        
+                        # Ejecutar acción real
                         if comando_encontrado:
                             cmd = comando_encontrado.group(1).strip()
-                            # Protección de seguridad para el dueño
                             if "/deop" in cmd and OWNER_NAME.lower() in cmd.lower():
-                                log(f"❌ REBELIÓN BLOQUEADA")
+                                log("❌ Intento de rebelión bloqueado.")
                             elif any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
                                 mcr.command(cmd)
-                                log(f"🛠️ CMD EJECUTADO: {cmd}")
+                                log(f"🛠️ CMD: {cmd}")
                 except Exception as re_err:
-                    log(f"⚠️ RCON Error: {re_err}")
+                    log(f"⚠️ RCON Error detallado: {re_err}")
 
         except Exception as e:
-            log(f"❌ Error: {e}")
+            log(f"❌ Error General: {e}")
 
 if __name__ == "__main__":
     discord_client.run(DISCORD_TOKEN)
