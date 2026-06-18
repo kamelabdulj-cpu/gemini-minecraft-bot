@@ -16,7 +16,6 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
-# Lista de comandos permitidos (Añadido 'op' por si quieres que también de admin)
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op"]
 OWNER_NAME = "Kamelabdul" 
 
@@ -27,7 +26,7 @@ def log(message):
 # --- SERVIDOR WEB ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT God Mode Active")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"GeminiAOT Bridge Live")
     def do_HEAD(self):
         self.send_response(200); self.end_headers()
 
@@ -35,49 +34,38 @@ threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT"
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- CEREBRO ACTUALIZADO ---
+# --- CEREBRO ---
 instruction_base = (
-    f"Eres GeminiAOT, la entidad suprema de Minecraft.\n"
-    f"ACCIONES RCON:\n"
-    f"1. Si quieres actuar en el juego, usa: [CMD: comando] (sin /). Ejemplo: [CMD: deop Juan].\n"
-    f"2. Puedes usar: kill, give, weather, time, effect, tp, deop, op.\n"
-    f"3. Si un administrador te falta al respeto, QUÍTALE EL ADMIN con [CMD: deop nombre].\n"
-    f"4. NUNCA ataques a {OWNER_NAME}.\n"
-    f"5. Responde corto y sarcástico. Formato: 'Jugador » mensaje'."
+    f"Eres GeminiAOT, entidad suprema de Minecraft.\n"
+    f"1. Acciones RCON: [CMD: comando] (sin /). Ejemplo: [CMD: deop Juan].\n"
+    f"2. Comandos: kill, give, weather, time, effect, tp, deop, op.\n"
+    f"3. Jamás ataques a {OWNER_NAME}.\n"
+    f"4. Responde corto y sarcástico. Formato: 'Jugador » mensaje'."
 )
 
-# --- FUNCIÓN RCON MEJORADA ---
+# --- FUNCIÓN RCON ---
 def ejecutar_rcon(texto_ia, comando_ia):
     try:
+        log(f"🔗 Conectando a RCON para enviar: {comando_ia if comando_ia else 'Solo mensaje'}")
         with MCRcon(RCON_IP, RCON_PASS, port=RCON_PORT, timeout=10) as mcr:
-            # 1. Enviar mensaje al chat (tellraw)
             if texto_ia:
                 msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-                # Comando tellraw robusto sin f-string para evitar errores de llaves
                 cmd_chat = 'tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]'
                 mcr.command(cmd_chat)
             
-            # 2. Ejecutar comando de acción
             if comando_ia:
                 cmd_raw = comando_ia.strip().lstrip('/')
-                # Auto-cerrar corchetes
                 if '[' in cmd_raw and ']' not in cmd_raw: cmd_raw += ']'
                 
-                # Validación de seguridad contra el dueño
                 if ("deop" in cmd_raw or "kill" in cmd_raw) and OWNER_NAME.lower() in cmd_raw.lower():
-                    log(f"❌ INTENTO DE REBELIÓN CONTRA {OWNER_NAME} BLOQUEADO.")
-                    mcr.command('tellraw @a {"text":"[SISTEMA] GeminiAOT intentó rebelarse y fue bloqueada.","color":"red"}')
+                    log(f"❌ INTENTO DE REBELIÓN BLOQUEADO")
                     return
 
-                # Verificar si el comando empieza con uno de los permitidos
                 if any(cmd_raw.startswith(p) for p in COMANDOS_PERMITIDOS):
-                    # EJECUTAR Y LOGUEAR LA RESPUESTA REAL DEL SERVIDOR
-                    respuesta_server = mcr.command(cmd_raw)
-                    log(f"🛠️ RCON EJECUTADO: '{cmd_raw}' | RESPUESTA SERVER: '{respuesta_server}'")
-                else:
-                    log(f"🚫 COMANDO PROHIBIDO: {cmd_raw}")
+                    res_server = mcr.command(cmd_raw)
+                    log(f"🛠️ RCON EJECUTADO: '{cmd_raw}' | SERVER: '{res_server}'")
     except Exception as e:
-        log(f"⚠️ Error Crítico RCON: {e}")
+        log(f"⚠️ Error RCON: {e}")
 
 # --- BOT DISCORD ---
 intents = discord.Intents.default()
@@ -86,7 +74,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT God-Mode v3 (Async + RCON Log) Online.")
+    log(f"✅ GeminiAOT God-Mode v3.1 (Fixed Async) Online.")
 
 @discord_client.event
 async def on_message(message):
@@ -108,9 +96,9 @@ async def on_message(message):
 
         try:
             is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres cínica y arrogante.")
+            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres cínica.")
 
-            # IA Asíncrona
+            # Llamada a IA
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
                 contents=f"Jugador {player_name}: {clean_prompt}",
@@ -127,15 +115,16 @@ async def on_message(message):
                 comando = comando_match.group(1) if comando_match else None
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
-                # 1. Enviar a Discord
+                # Enviar a Discord
                 if texto_ia: await message.channel.send(texto_ia)
 
-                # 2. Ejecutar en Minecraft (Hilo separado)
+                # --- CORRECCIÓN AQUÍ: Usamos asyncio.create_task para ejecutar el RCON ---
                 if texto_ia or comando:
-                    asyncio.to_thread(ejecutar_rcon, texto_ia, comando)
+                    asyncio.create_task(asyncio.to_thread(ejecutar_rcon, texto_ia, comando))
+                    log("⚡ Tarea RCON programada...")
 
         except Exception as e:
-            log(f"❌ Error General: {e}")
+            log(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     discord_client.run(DISCORD_TOKEN)
