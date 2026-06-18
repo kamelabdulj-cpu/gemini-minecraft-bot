@@ -1,12 +1,12 @@
 import os
 import discord
 import threading
-import sys # Para forzar los logs
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
 
-# --- FORZAR LOGS EN RENDER ---
+# --- FORZAR LOGS ---
 def log(message):
     print(message, flush=True)
     sys.stdout.flush()
@@ -26,41 +26,40 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# --- CONFIGURACIÓN GOOGLE GENAI ---
+# --- CONFIGURACIÓN ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- DETECCIÓN DE MODELO ESTABLE (NO EXPERIMENTAL) ---
-def get_stable_model():
-    log("🔍 Buscando modelos estables...")
+# --- DETECCIÓN DE MODELO LITE (Para evitar 503) ---
+def get_lite_model():
+    log("🔍 Buscando modelos Lite para evitar saturación...")
     try:
         available = [m.name for m in client_gemini.models.list()]
-        log(f"📋 Modelos encontrados en tu cuenta: {available}")
         
-        # Lista de prioridad: buscamos primero los estables, NO los 'exp'
+        # Prioridad a los modelos LITE (soportan más carga)
         priorities = [
-            "gemini-1.5-flash-8b", # Muy estable y rápido en 2026
-            "gemini-1.5-flash", 
-            "gemini-1.5-pro",
-            "gemini-2.0-flash" 
+            "models/gemini-3.1-flash-lite", 
+            "models/gemini-flash-lite-latest",
+            "models/gemini-2.0-flash-lite",
+            "models/gemini-2.5-flash-lite",
+            "models/gemini-1.5-flash" # Última opción si no hay Lite
         ]
         
         for p in priorities:
             if p in available:
-                log(f"⭐ Elegido modelo estable: {p}")
+                log(f"⭐ Modelo elegido por estabilidad: {p}")
                 return p
         return available[0]
     except Exception as e:
-        log(f"❌ Error listando modelos: {e}")
-        return "gemini-1.5-flash-8b"
+        log(f"❌ Error listando: {e}")
+        return "models/gemini-flash-lite-latest"
 
-SELECTED_MODEL = get_stable_model()
+SELECTED_MODEL = get_lite_model()
 
 # --- PERSONALIDAD ---
-instruction_base = "Conocimiento total de Minecraft 1.21. "
-personality_normal = instruction_base + "Eres GeminiAOT, un bot tóxico y sarcástico. Responde corto y directo."
+instruction_base = "Conocimiento de Minecraft 1.21.1 "
+personality_normal = instruction_base + "Eres GeminiAOT, un bot tóxico y sarcástico. Responde corto."
 personality_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres amable y fiel."
 
 safety_config = [
@@ -75,7 +74,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ Bot online | Usuario: {discord_client.user} | Modelo: {SELECTED_MODEL}")
+    log(f"✅ Bot online | Modelo: {SELECTED_MODEL}")
 
 @discord_client.event
 async def on_message(message):
@@ -98,18 +97,18 @@ async def on_message(message):
                 config=types.GenerateContentConfig(
                     system_instruction=sys_msg,
                     safety_settings=safety_config,
-                    max_output_tokens=300, # Reducido para evitar 503 por sobrecarga
+                    max_output_tokens=250, # Reducido para mayor velocidad
                 ),
             )
 
             if response.text:
                 await message.channel.send(response.text[:2000])
             else:
-                await message.channel.send("No tengo nada que decirte ahora mismo.")
+                await message.channel.send("No tengo ganas de hablar.")
 
         except Exception as e:
-            log(f"❌ Error en respuesta: {e}")
-            await message.channel.send(f"Error 503/404: `{str(e)[:100]}`. Intenta de nuevo en un momento.")
+            log(f"❌ Error: {e}")
+            await message.channel.send("⚠️ Los servidores de Google están saturados. Reintenta en 10 segundos.")
 
 if __name__ == "__main__":
     discord_client.run(DISCORD_TOKEN)
