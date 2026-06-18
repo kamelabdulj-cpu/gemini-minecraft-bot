@@ -40,12 +40,14 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-    # 1. EVITAR BUCLES ESTRICTOS: Solo ignorar si el mensaje lo envió ESTE bot exactamente
+    # EVITAR BUCLES: Solo ignorar si el ID es EXACTAMENTE el de este bot
     if message.author.id == client.user.id:
         return
 
-    # 2. CAPTURAR EL TEXTO: Juntamos el contenido normal y el texto de cajitas (embeds) por si acaso
+    # CAPTURAR TEXTO COMPLETO (Soporta Webhooks de Minecraft y Embeds)
     full_text = message.content.lower()
+    
+    # Si viene empaquetado en un embed del puente de Minecraft, extraemos su texto
     if message.embeds:
         for embed in message.embeds:
             if embed.description:
@@ -53,24 +55,24 @@ async def on_message(message):
             if embed.title:
                 full_text += " " + embed.title.lower()
 
-    # 3. VALIDACIÓN AGRESIVA: Verificamos si se menciona al bot o se escribe su nombre
+    # VALIDACIÓN: Responder si mencionan al bot, su nombre, o si viene el tag plano del webhook de Minecraft
     if client.user.mentioned_in(message) or "geminiaot" in full_text or str(client.user.id) in full_text:
         
-        # Limpiamos el texto para mandarlo limpio a la IA
+        # Limpiamos el texto quitando pings y el nombre del bot
         clean_prompt = message.content.lower().replace(f'<@!{client.user.id}>', '').replace(f'<@{client.user.id}>', '')
         clean_prompt = clean_prompt.replace('geminiaot', '').replace('@', '').strip()
         
-        # Si venía de un puente/embed y message.content estaba vacío, usamos el texto capturado
+        # Si el contenido nativo estaba vacío (común en webhooks), usamos el texto del embed estructurado
         if not clean_prompt and message.embeds:
             clean_prompt = full_text.replace('geminiaot', '').replace('@', '').strip()
 
-        # Si el texto quedó completamente vacío, le soltamos la burla por defecto
+        # Si el mensaje contiene caracteres del puente pero no hay pregunta real
         if not clean_prompt or clean_prompt == "»":
             await message.channel.send("¿Qué quieres? Ni siquiera has escrito una pregunta válida, genio.")
             return
 
         try:
-            # Detectar si el mensaje viene de Kamel o si lo nombran en el texto
+            # Seleccionar personalidad dinámica según el autor del mensaje o si te nombran
             if "kamel" in full_text or "kamelabdul" in message.author.name.lower():
                 model_dynamic = genai.GenerativeModel(
                     model_name="gemini-1.5-flash",
@@ -82,7 +84,7 @@ async def on_message(message):
                     system_instruction=system_instruction_normal
                 )
 
-            # Generar la respuesta usando el modelo elegido dinámicamente
+            # Enviar la respuesta directo al canal de Discord
             response = model_dynamic.generate_content(clean_prompt)
             await message.channel.send(response.text)
             
