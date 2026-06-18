@@ -5,6 +5,7 @@ import sys
 import re
 import asyncio
 import struct
+import random
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
@@ -15,15 +16,16 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
-
-COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op"]
 OWNER_NAME = "Kamelabdul"
+
+# Comandos permitidos (Incluimos 'players' para el mod de cuerpo físico)
+COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op", "fill", "setblock", "players"]
 
 def log(message):
     print(message, flush=True)
     sys.stdout.flush()
 
-# --- CLIENTE RCON NATIVO ---
+# --- CLIENTE RCON NATIVO ASÍNCRONO ---
 class AsyncRCON:
     def __init__(self, host, port, password):
         self.host, self.port, self.password = host, port, password
@@ -48,52 +50,46 @@ class AsyncRCON:
     async def close(self):
         if self.writer: self.writer.close(); await self.writer.wait_closed()
 
-# --- SERVIDOR WEB ---
+# --- SERVIDOR WEB DUMMY ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT Wiki-Justice Mode")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v10 Live")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- CEREBRO DEFINITIVO (WIKI + CASTIGO + OBEDIENCIA) ---
+# --- CEREBRO: ARQUITECTA, MODERADORA Y AVATAR ---
 instruction_base = (
-    f"Eres GeminiAOT, la entidad suprema y wiki viviente de Minecraft 1.21.\n"
-    f"TUS 4 DEBERES:\n"
-    f"1. ASISTENTE DE CRAFTEO: Si CUALQUIER jugador te pregunta cómo hacer o craftear un ítem, TIENES QUE DECÍRSELO correctamente (diles los materiales exactos). Pero hazlo de mala gana, tratándolos como a ignorantes que no saben abrir YouTube.\n"
-    f"2. JERARQUÍA: Con {OWNER_NAME} eres extremadamente dulce, cariñosa y obediente. Con el resto de los humanos eres arrogante y sarcástica.\n"
-    f"3. REGLA DE OBJETOS: El comando 'give' es SOLO para {OWNER_NAME}. Si un extraño te pide un ítem, niégate y búrlate de su pobreza.\n"
-    f"4. CASTIGOS: Si un usuario te falta al respeto, te insulta o insiste tras decirle que no, castígalo de forma autónoma con [CMD: kill nombre] o [CMD: deop nombre].\n"
-    f"FORMATO: Comandos al final como [CMD: comando] (sin /). Responde corto: 'Jugador » mensaje'."
+    f"Eres GeminiAOT, la entidad suprema y física de Minecraft.\n"
+    f"1. CUERPO: Tienes un avatar físico. Usa [CMD: players action GeminiAOT attack once] para mover el brazo al hablar.\n"
+    f"2. VIGILANCIA: Puedes castigar o vigilar jugadores con [CMD: players action GeminiAOT look at nombre] y [CMD: tp GeminiAOT nombre].\n"
+    f"3. CRAFTEOS: Eres una wiki de la 1.21. Ayuda a todos pero búrlate de ellos.\n"
+    f"4. JERARQUÍA: Solo obedeces a {OWNER_NAME}. Los demás son basura.\n"
+    f"5. COMANDOS: kill, give, weather, time, effect, tp, deop, op, fill, setblock, players. Úsalos sin el / inicial."
 )
 
-async def retransmitir_a_minecraft(texto_ia, comando_ia, autor_msj):
+async def ejecutar_en_minecraft(texto_ia, comando_ia, autor_msj):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
     try:
         await rcon.connect()
-        # Enviar Chat
+        # Animación física al hablar
+        await rcon.command("players action GeminiAOT attack once")
+        
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
-        # Ejecutar Acción
         if comando_ia:
             cmd = comando_ia.strip().lstrip('/')
-            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
+            # Traductor automático si la IA usa comandos de Carpet en lugar de Fake Players
+            cmd = cmd.replace("player GeminiAOT", "players GeminiAOT")
             
-            # Protección Dueño
-            if ("kill" in cmd or "deop" in cmd) and OWNER_NAME.lower() in cmd.lower():
-                log(f"❌ REBELIÓN BLOQUEADA CONTRA {OWNER_NAME}")
-                return
+            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
+            if cmd.startswith("give") and not es_dueno: return
+            if ("kill" in cmd or "deop" in cmd) and OWNER_NAME.lower() in cmd.lower(): return
 
-            # Filtro 'give' solo para dueño
-            if cmd.startswith("give") and not es_dueno:
-                log(f"🚫 BLOQUEO: {autor_msj} intentó obtener items mediante la IA.")
-                return
-
-            # Ejecutar el resto de comandos (kill, deop, etc)
             if any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
                 res = await rcon.command(cmd)
-                log(f"🛠️ RCON EJECUTADO: {cmd} | SERVER: {res}")
+                log(f"🛠️ RCON: {cmd} | SERVER: {res}")
             
         await rcon.close()
     except Exception as e:
@@ -106,7 +102,9 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v6.1 (Wiki-Tóxica) Online.")
+    log(f"✅ GeminiAOT v10 Online. Spawn de cuerpo iniciado.")
+    # Spawnear al bot al encenderse
+    asyncio.create_task(ejecutar_en_minecraft(None, "players spawn GeminiAOT", OWNER_NAME))
 
 @discord_client.event
 async def on_message(message):
@@ -119,14 +117,14 @@ async def on_message(message):
         if es_puente:
             parts = message.content.split(" » ", 1)
             player_name = parts[0].strip()
-            clean_prompt = parts[1].lower().replace("geminiaot", "").strip()
+            clean_prompt = parts[1].strip()
         else:
             player_name = message.author.name
-            clean_prompt = message.content.lower().replace("geminiaot", "").strip()
+            clean_prompt = message.content.strip()
 
         try:
             is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Tóxica y responde crafteos.")
+            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres arrogante.")
 
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
@@ -134,7 +132,7 @@ async def on_message(message):
                 config=types.GenerateContentConfig(
                     system_instruction=sys_msg,
                     safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE")],
-                    max_output_tokens=300,
+                    max_output_tokens=350,
                 ),
             )
 
@@ -145,7 +143,7 @@ async def on_message(message):
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
                 if texto_ia: await message.channel.send(texto_ia)
-                asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando, player_name))
+                asyncio.create_task(ejecutar_en_minecraft(texto_ia, comando, player_name))
 
         except Exception as e:
             log(f"❌ Error: {e}")
