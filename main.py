@@ -9,14 +9,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from google import genai
 from google.genai import types
 
-# --- CONFIGURACIÓN (CORREGIDA) ---
+# --- CONFIGURACIÓN ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
-# IMPORTANTE: Tu nombre exacto en Minecraft (Sensible a mayúsculas)
-OWNER_NAME = "KamelAbdul" 
+
+OWNER_NAME = "KamelAbdul" # Exacto como en Minecraft
+BOT_NAME_MC = "GeminiAOT" # Tu nombre en el juego
 
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op", "fill", "setblock", "players"]
 
@@ -51,7 +52,7 @@ class AsyncRCON:
 
 # --- SERVIDOR WEB ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v15 Live")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v16 Fixed")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
@@ -59,43 +60,35 @@ client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 # --- CEREBRO ---
 instruction_base = (
     f"Eres GeminiAOT, entidad física de Minecraft.\n"
-    f"SINTAXIS RCON (MOD FAKE PLAYERS):\n"
-    f"- Aparecer: [CMD: players GeminiAOT spawn]\n"
-    f"- Mover brazo: [CMD: players GeminiAOT attack]\n"
-    f"- Mirar a alguien: [CMD: players GeminiAOT look {OWNER_NAME}]\n"
+    f"SINTAXIS CORRECTA RCON:\n"
+    f"- Aparecer: [CMD: players spawn GeminiAOT]\n"
+    f"- Mover brazo: [CMD: players action GeminiAOT attack]\n"
+    f"- Mirar a dueño: [CMD: players action GeminiAOT look {OWNER_NAME}]\n"
     f"REGLAS: Eres arrogante con todos y sumisa con {OWNER_NAME}.\n"
-    f"IMPORTANTE: El nombre de tu dueño es {OWNER_NAME} (respeta mayúsculas).\n"
-    f"Formato: 'Jugador » mensaje'. Responde siempre corto."
+    f"Formato: 'Jugador » mensaje'. Responde corto."
 )
 
 async def ejecutar_en_minecraft(texto_ia, comando_ia, autor_msj):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
     try:
         await rcon.connect()
+        # 1. Asegurar presencia (Sintaxis que funcionó en tus logs)
+        await rcon.command(f"players spawn {BOT_NAME_MC}")
         
-        # 1. ASEGURAR SPAWN
-        await rcon.command("players GeminiAOT spawn")
-        
-        # 2. ANIMACIÓN AL HABLAR (Sintaxis simplificada para evitar errores)
-        await rcon.command("players GeminiAOT attack")
-        
-        # 3. CHAT
+        # 2. Chat
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
-        # 4. EJECUTAR COMANDO DE LA IA
+        # 3. Comandos
         if comando_ia:
             cmd = comando_ia.strip().lstrip('/')
+            # Corrección de orden si la IA se equivoca
+            if f"{BOT_NAME_MC} spawn" in cmd: cmd = f"players spawn {BOT_NAME_MC}"
             
-            # TRADUCTOR AUTOMÁTICO DE SINTAXIS
-            if "players spawn GeminiAOT" in cmd: cmd = cmd.replace("players spawn GeminiAOT", "players GeminiAOT spawn")
-            if "look at" in cmd: cmd = cmd.replace("look at", "look")
-            
-            # FILTRO SEGURIDAD DUEÑO (Respeta Mayúsculas)
-            es_dueno = OWNER_NAME in autor_msj or OWNER_NAME.lower() in autor_msj.lower()
+            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
             if cmd.startswith("give") and not es_dueno: return
-            if ("kill" in cmd or "deop" in cmd) and OWNER_NAME in cmd: return
+            if ("kill" in cmd or "deop" in cmd) and OWNER_NAME.lower() in cmd.lower(): return
 
             if any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
                 res = await rcon.command(cmd)
@@ -112,17 +105,28 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v15 (Final Case Fix) Online.")
-    asyncio.create_task(ejecutar_en_minecraft(None, None, OWNER_NAME))
+    log(f"✅ GeminiAOT v16 (Anti-Spam) Online.")
 
 @discord_client.event
 async def on_message(message):
+    # --- FILTRO ANTI-SPAM DEFINITIVO ---
     es_puente = " » " in message.content
-    if message.author.id == discord_client.user.id and not es_puente: return
-    if "[GeminiAOT]" in message.content: return
+    
+    # 1. Si el mensaje NO es del puente y es del bot, ignorar
+    if message.author.id == discord_client.user.id and not es_puente:
+        return
 
+    # 2. Si el mensaje ES del puente, verificar quién es el jugador original
+    if es_puente:
+        player_name_mc = message.content.split(" » ", 1)[0].strip()
+        # SI EL JUGADOR ES EL MISMO BOT, IGNORAR (Evita el bucle)
+        if player_name_mc == BOT_NAME_MC:
+            return
+
+    # 3. Solo procesar si mencionan al bot
     if "geminiaot" in message.content.lower() or discord_client.user.mentioned_in(message):
-        player_name = OWNER_NAME
+        
+        # Extraer nombre real para la IA
         if es_puente:
             parts = message.content.split(" » ", 1)
             player_name = parts[0].strip()
@@ -132,10 +136,10 @@ async def on_message(message):
             clean_prompt = message.content.strip()
 
         try:
-            # Detectar si es Kamel (Case insensitive para el prompt pero exacto para el sistema)
             is_kamel = OWNER_NAME.lower() in player_name.lower()
             sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Arrogante.")
 
+            # Llamada a la IA
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
                 contents=f"Jugador {player_name}: {clean_prompt}",
@@ -152,7 +156,9 @@ async def on_message(message):
                 comando = match.group(1) if match else None
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
+                # Enviar a Discord
                 if texto_ia: await message.channel.send(texto_ia)
+                # Ejecutar RCON
                 asyncio.create_task(ejecutar_en_minecraft(texto_ia, comando, player_name))
 
         except Exception as e:
