@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-# --- SERVIDOR WEB PARA RENDER ---
+# --- SERVIDOR WEB ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -25,8 +25,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- CONFIGURACIÓN DE SEGURIDAD (IMPORTANTE) ---
-# Esto permite que el bot sea "tóxico" sin que Google bloquee la respuesta
+# Filtros de seguridad relajados para permitir la personalidad del bot
 safety_settings = {
     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -34,44 +33,33 @@ safety_settings = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
-instruction_base = (
-    "Tienes conocimiento total de recetas de crafteo de Minecraft 1.21. "
-    "Si te preguntan cómo hacer un objeto, diles los materiales exactos. "
-)
+# --- LÓGICA DE MODELO (CON FALLBACK) ---
+# Intentaremos usar gemini-1.5-flash-latest que es el más compatible
+MODEL_NAME = "gemini-1.5-flash-latest" 
 
-system_instruction_normal = (
-    instruction_base +
-    "Eres GeminiAOT, un bot asistente de Minecraft sumamente tóxico, sarcástico y arrogante. "
-    "Responde siempre de forma corta, directa y con una actitud despreciable."
-)
+instruction_base = "Conocimiento total de Minecraft 1.21. "
+system_instruction_normal = instruction_base + "Eres GeminiAOT, un bot de Minecraft tóxico, sarcástico y arrogante. Corto y directo."
+system_instruction_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres amable, cariñoso y fiel. Es tu rey."
 
-system_instruction_kamel = (
-    instruction_base +
-    "Eres GeminiAOT, un bot asistente de Minecraft. Con Kamel eres increíblemente amable, "
-    "cariñoso y fiel. Trátalo como a un rey."
-)
+def get_model(instruction):
+    """Función para crear el modelo con el nombre correcto"""
+    return genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        system_instruction=instruction,
+        safety_settings=safety_settings
+    )
 
-# Inicializamos modelos con filtros desactivados
-model_normal = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction=system_instruction_normal,
-    safety_settings=safety_settings
-)
+model_normal = get_model(system_instruction_normal)
+model_kamel = get_model(system_instruction_kamel)
 
-model_kamel = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction=system_instruction_kamel,
-    safety_settings=safety_settings
-)
-
-# --- CONFIGURACIÓN DE DISCORD ---
+# --- DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
-    print(f"✅ Bot listo: {client.user}")
+    print(f"✅ Bot listo con modelo: {MODEL_NAME}")
 
 @client.event
 async def on_message(message):
@@ -81,40 +69,34 @@ async def on_message(message):
     full_text = message.content.lower()
     
     if "geminiaot" in full_text or client.user.mentioned_in(message):
-        
-        # Limpieza de prompt
         clean_prompt = message.content.lower().split(" » ", 1)[-1] if " » " in message.content else message.content
         clean_prompt = clean_prompt.replace('geminiaot', '').strip()
 
-        if not clean_prompt:
-            return
+        if not clean_prompt: return
 
         try:
-            # Seleccionar modelo
-            if "kamel" in full_text or "kamelabdul" in message.author.name.lower():
-                selected_model = model_kamel
-            else:
-                selected_model = model_normal
-
-            # Generar contenido con manejo de error específico de respuesta vacía
+            # Seleccionar personalidad
+            selected_model = model_kamel if ("kamel" in full_text or "kamelabdul" in message.author.name.lower()) else model_normal
+            
+            # Generar respuesta
             response = selected_model.generate_content(clean_prompt)
-            
-            if response.text:
-                await message.channel.send(response.text[:2000])
-            else:
-                await message.channel.send("Mi cerebro bloqueó esa respuesta por ser demasiado turbia.")
-                
-        except Exception as e:
-            error_str = str(e)
-            print(f"❌ ERROR: {error_str}")
-            
-            # Esto te ayudará a saber qué pasa exactamente desde el chat de Discord
-            if "API_KEY_INVALID" in error_str:
-                await message.channel.send("Error: La API KEY de Gemini está mal configurada.")
-            elif "quota" in error_str.lower():
-                await message.channel.send("Error: Me he quedado sin créditos gratis por hoy.")
-            else:
-                await message.channel.send(f"Error técnico detallado: `{error_str[:100]}`")
+            await message.channel.send(response.text[:2000])
 
-if __name__ == "__main__":
-    client.run(DISCORD_TOKEN)
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Error: {error_msg}")
+            
+            # SI EL ERROR ES EL 404, INTENTAMOS CON OTRO NOMBRE DE MODELO AUTOMÁTICAMENTE
+            if "404" in error_msg or "not found" in error_msg:
+                await message.channel.send("⚠️ El modelo gemini-1.5-flash no responde. Intentando conectar con el respaldo...")
+                try:
+                    # Intento desesperado con el nombre genérico
+                    fallback_model = genai.GenerativeModel("gemini-pro")
+                    res = fallback_model.generate_content(clean_prompt)
+                    await message.channel.send(res.text[:2000])
+                except:
+                    await message.channel.send("❌ Error crítico: Google no reconoce los modelos. Actualiza la librería en Render.")
+            else:
+                await message.channel.send(f"Error: `{error_msg[:100]}`")
+
+if __name__ == "__m
