@@ -49,16 +49,25 @@ async def on_message(message):
             "Si otros te hablan, sé tóxico, sarcástico y búrlate antes de responder."
         )
 
-        try:
-            # Nueva llamada a la API
-            response = client_genai.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=clean_prompt,
-                config={"system_instruction": sys_instr}
-            )
-            await message.channel.send(response.text)
-        except Exception as e:
-            print(f"Error real: {e}")
-            await message.channel.send("Me colapsé, intenta de nuevo.")
+       try:
+            # 1. Limpieza extrema: eliminamos saltos de línea y caracteres extraños
+            clean_prompt = "".join([c if c.isalnum() or c in " ?.!" else " " for c in clean_prompt])
+            
+            # 2. Elegir modelo
+            if "kamel" in full_text or "kamelabdul" in message.author.name.lower():
+                model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction_kamel)
+            else:
+                model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction_normal)
 
+            # 3. Llamada segura
+            response = model.generate_content(clean_prompt)
+            
+            # 4. Enviar respuesta
+            await message.channel.send(response.text)
+            
+        except Exception as e:
+            print(f"ERROR FINAL: {e}")
+            # Si falla, enviamos el error a la consola pero al usuario le damos una salida simple
+            await message.channel.send("Estoy teniendo problemas técnicos con el servidor de IA, espera unos segundos.")
+            
 client.run(DISCORD_TOKEN)
