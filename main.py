@@ -18,11 +18,10 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
-OWNER_NAME = "KamelAbdul" 
+OWNER_NAME = "KamelAbdul" # Nombre exacto con mayúsculas
 BOT_NAME_MC = "GeminiAOT"
 RENDER_URL = "https://gemini-minecraft-bot.onrender.com"
 
-# Lista de comandos permitidos
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op", "fill", "setblock", "players"]
 
 def log(message):
@@ -59,59 +58,60 @@ def self_ping():
     while True:
         try: requests.get(RENDER_URL)
         except: pass
-        time.sleep(300)
+        time.sleep(300) # 5 minutos
 
 # --- SERVIDOR WEB ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT v20 Active")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"Bot v21 Online")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 threading.Thread(target=self_ping, daemon=True).start()
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# --- CEREBRO ---
+# --- CEREBRO (Instrucciones Simplificadas para evitar errores de la IA) ---
 instruction_base = (
-    f"Eres GeminiAOT, el avatar de IA con cuerpo físico.\n"
+    f"Eres GeminiAOT, avatar físico de Minecraft.\n"
+    f"REGLAS:\n"
     f"1. Si {OWNER_NAME} pide algo, USA: [CMD: give {OWNER_NAME} item cantidad].\n"
-    f"2. Para moverte a tu dueño usa: [CMD: tp @e[name={BOT_NAME_MC},limit=1] {OWNER_NAME}].\n"
-    f"3. Responde corto y tóxico a otros, pero a {OWNER_NAME} trátalo como a un Dios."
+    f"2. Para aparecer y moverte usa siempre el selector @e[name={BOT_NAME_MC},limit=1].\n"
+    f"Ejemplo: [CMD: tp @e[name={BOT_NAME_MC},limit=1] {OWNER_NAME}]\n"
+    f"3. Responde de forma muy corta, arrogante y tóxica a desconocidos."
 )
 
-async def retransmitir_a_minecraft(texto_ia, comando_ia, autor_msj):
+async def ejecutar_en_minecraft(texto_ia, comando_ia, autor_msj):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
-    # Definimos el selector de entidad para evitar el error de "No entity found"
+    # Selector de seguridad para que Minecraft lo encuentre siempre
     selector_bot = f"@e[name={BOT_NAME_MC},limit=1]"
     
     try:
         await rcon.connect()
         
-        # 1. Intentar spawnear (si ya existe, el mod lo ignora)
+        # 1. Asegurar presencia (Spawn)
         await rcon.command(f"players spawn {BOT_NAME_MC}")
+        await asyncio.sleep(0.5) # Breve espera
         
-        # 2. Esperar a que Minecraft registre la entidad
-        await asyncio.sleep(1.0)
-        
-        # 3. Teletransporte forzado usando SELECTOR DE ENTIDAD
+        # 2. Forzar TP al dueño para que se vea el cuerpo
         await rcon.command(f"tp {selector_bot} {OWNER_NAME}")
         
-        # 4. Chat
+        # 3. Chat Tellraw
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
-        # 5. Ejecutar Comando de la IA
+        # 4. Ejecutar Comando de la IA (si existe)
         if comando_ia:
             cmd = comando_ia.strip().lstrip('/')
             
-            # TRADUCCIÓN AUTOMÁTICA AL SELECTOR:
-            # Si la IA intenta usar su nombre solo, lo cambiamos por el selector @e
-            if f"tp {BOT_NAME_MC}" in cmd:
-                cmd = cmd.replace(f"tp {BOT_NAME_MC}", f"tp {selector_bot}")
-
+            # Filtro de Seguridad 'give'
             es_dueno = OWNER_NAME.lower() in autor_msj.lower()
-            if "give" in cmd and not es_dueno: return
+            if "give" in cmd and not es_dueno:
+                log(f"🚫 Denegado give a {autor_msj}")
+                return
 
             if any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
+                # Limpieza final: Si la IA olvidó el corchete al final, se lo ponemos
+                if '[' in cmd and ']' not in cmd: cmd += ']'
+                
                 res = await rcon.command(cmd)
                 log(f"🛠️ RCON: {cmd} | SERVER: {res}")
             
@@ -126,16 +126,28 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v20 (Entity Selector Fix) Online.")
+    log(f"✅ GeminiAOT v21 (Anti-Spam + Regex Fix) Online.")
 
 @discord_client.event
 async def on_message(message):
+    # --- FILTRO ANTI-BUCLE (EVITA EL SPAM) ---
     es_puente = " » " in message.content
-    if message.author.id == discord_client.user.id and not es_puente: return
-    if es_puente and message.content.split(" » ", 1)[0].strip().lower() == BOT_NAME_MC.lower(): return
+    
+    # 1. Si el mensaje es del propio bot de Discord, ignorar
+    if message.author.id == discord_client.user.id and not es_puente:
+        return
 
+    # 2. Si el mensaje viene del puente, extraer autor de Minecraft
+    if es_puente:
+        # Formato: "Nombre » mensaje"
+        autor_mc = message.content.split(" » ", 1)[0].strip()
+        # Si el mensaje en Minecraft lo escribió GeminiAOT, IGNORAR (Evita el spam)
+        if autor_mc.lower() == BOT_NAME_MC.lower():
+            return
+
+    # 3. Solo responder si mencionan al bot (Case insensitive)
     if "geminiaot" in message.content.lower() or discord_client.user.mentioned_in(message):
-        player_name = OWNER_NAME
+        
         if es_puente:
             parts = message.content.split(" » ", 1)
             player_name = parts[0].strip()
@@ -146,7 +158,7 @@ async def on_message(message):
 
         try:
             is_kamel = OWNER_NAME.lower() in player_name.lower()
-            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Arrogante.")
+            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres arrogante.")
 
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
@@ -160,12 +172,13 @@ async def on_message(message):
 
             if response.text:
                 raw_res = response.text
-                match = re.search(r"\[CMD:\s*(.*?)\]", raw_res)
+                # REGEX MEJORADO: Usamos (.+) en lugar de (.*?) para que no se detenga en el primer corchete
+                match = re.search(r"\[CMD:\s*(.+)\]", raw_res)
                 comando = match.group(1) if match else None
-                texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
+                texto_ia = re.sub(r"\[CMD:.*\]", "", raw_res).strip()
                 
                 if texto_ia: await message.channel.send(texto_ia)
-                asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando, player_name))
+                asyncio.create_task(ejecutar_en_minecraft(texto_ia, comando, player_name))
 
         except Exception as e:
             log(f"❌ Error: {e}")
