@@ -2,14 +2,16 @@ import os
 import discord
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai import types
 
-# --- SERVIDOR WEB ---
+# --- SERVIDOR WEB (Corregido para Render) ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers()
         self.wfile.write(b"Bot activo")
+    def do_HEAD(self): # Esto evita el error 501 que salía en tus logs
+        self.send_response(200); self.end_headers()
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
@@ -18,73 +20,71 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# --- CONFIGURACIÓN ---
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+# --- CONFIGURACIÓN NUEVA SDK 2026 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# 1. BUSCAR MODELO DISPONIBLE AUTOMÁTICAMENTE
-print("🔍 Buscando modelos disponibles...")
-available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-print(f"✅ Modelos encontrados: {available_models}")
+# Inicializamos el nuevo cliente de Google
+client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# Prioridad de modelos para 2026
-preferred_models = [
-    'models/gemini-1.5-flash', 
-    'models/gemini-1.5-flash-latest', 
-    'models/gemini-2.0-flash', # Posible modelo en 2026
-    'models/gemini-1.5-pro'
+# Configuración de comportamiento
+instruction_base = "Conocimiento total de Minecraft 1.21. "
+personality_normal = instruction_base + "Eres GeminiAOT, un bot de Minecraft sumamente tóxico, sarcástico y arrogante. Responde corto y con odio."
+personality_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres increíblemente amable, cariñoso y fiel. Es tu rey."
+
+# Configuración de Seguridad (Para que permita ser tóxico)
+safety_config = [
+    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
 ]
-
-SELECTED_MODEL = next((m for m in preferred_models if m in available_models), available_models[0])
-print(f"🚀 Usando el modelo: {SELECTED_MODEL}")
-
-# --- PERSONALIDAD ---
-safety_settings = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-}
-
-instruction_base = "Conocimiento de Minecraft 1.21. "
-system_instruction_normal = instruction_base + "Eres GeminiAOT, un bot tóxico, sarcástico y arrogante. Responde corto."
-system_instruction_kamel = instruction_base + "Eres GeminiAOT. Con Kamel eres amable y fiel."
-
-# Crear modelos
-try:
-    model_normal = genai.GenerativeModel(model_name=SELECTED_MODEL, system_instruction=system_instruction_normal, safety_settings=safety_settings)
-    model_kamel = genai.GenerativeModel(model_name=SELECTED_MODEL, system_instruction=system_instruction_kamel, safety_settings=safety_settings)
-except Exception as e:
-    print(f"⚠️ Error con system_instruction, intentando modo compatible: {e}")
-    model_normal = genai.GenerativeModel(model_name=SELECTED_MODEL)
-    model_kamel = genai.GenerativeModel(model_name=SELECTED_MODEL)
 
 # --- DISCORD ---
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+discord_client = discord.Client(intents=intents)
 
-@client.event
+@discord_client.event
 async def on_ready():
-    print(f"✅ Bot online: {client.user} | Modelo: {SELECTED_MODEL}")
+    print(f"✅ Bot GeminiAOT (Versión 2026) listo: {discord_client.user}")
 
-@client.event
+@discord_client.event
 async def on_message(message):
-    if message.author.id == client.user.id: return
+    if message.author.id == discord_client.user.id: return
     
     full_text = message.content.lower()
-    if "geminiaot" in full_text or client.user.mentioned_in(message):
+    
+    if "geminiaot" in full_text or discord_client.user.mentioned_in(message):
+        # Limpiar prompt
         clean_prompt = message.content.lower().split(" » ", 1)[-1] if " » " in message.content else message.content
         clean_prompt = clean_prompt.replace('geminiaot', '').strip()
         
         if not clean_prompt: return
 
         try:
-            model = model_kamel if ("kamel" in full_text or "kamelabdul" in message.author.name.lower()) else model_normal
-            response = model.generate_content(clean_prompt)
-            await message.channel.send(response.text[:2000])
+            # Seleccionar instrucción de sistema según el usuario
+            is_kamel = "kamel" in full_text or "kamelabdul" in message.author.name.lower()
+            sys_msg = personality_kamel if is_kamel else personality_normal
+
+            # Llamada a la NUEVA API (google.genai)
+            # Usamos gemini-1.5-flash que es el estándar actual
+            response = client_gemini.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=clean_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_msg,
+                    safety_settings=safety_config,
+                    max_output_tokens=500,
+                ),
+            )
+
+            if response.text:
+                await message.channel.send(response.text[:2000])
+            else:
+                await message.channel.send("No tengo ganas de responderte eso.")
+
         except Exception as e:
-            print(f"❌ Error: {e}")
-            await message.channel.send(f"Error técnico: `{str(e)[:100]}`")
+            print(f"❌ Error API: {e}")
+            await message.channel.send(f"Error técnico 2026: `{str(e)[:100]}`")
 
 if __name__ == "__main__":
-    client.run(DISCORD_TOKEN)
+    discord_client.run(DISCORD_TOKEN)
