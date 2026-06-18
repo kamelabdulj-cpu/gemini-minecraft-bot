@@ -16,7 +16,6 @@ RCON_IP = "34.186.32.18"
 RCON_PASS = "16827131"
 RCON_PORT = 25575
 
-# Comandos permitidos
 COMANDOS_PERMITIDOS = ["kill", "give", "weather", "time", "effect", "tp", "particle", "deop", "op"]
 OWNER_NAME = "Kamelabdul"
 
@@ -51,41 +50,51 @@ class AsyncRCON:
 
 # --- SERVIDOR WEB ---
 threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), 
-    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT Protected")),
+    type('D', (BaseHTTPRequestHandler,), {'do_GET': lambda s: (s.send_response(200), s.end_headers(), s.wfile.write(b"GeminiAOT Wiki-Justice Mode")),
                                           'do_HEAD': lambda s: (s.send_response(200), s.end_headers())})).serve_forever(), daemon=True).start()
 
-# --- IA Y PERSONALIDAD ---
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 
-# INSTRUCCIONES ESTRICTAS: Solo Kamel manda.
+# --- CEREBRO DEFINITIVO (WIKI + CASTIGO + OBEDIENCIA) ---
 instruction_base = (
-    f"Eres GeminiAOT, moderadora suprema de Minecraft.\n"
-    f"REGLA DE ORO: Solo obedeces comandos de {OWNER_NAME}. \n"
-    f"1. Si {OWNER_NAME} te pide algo, usa [CMD: comando].\n"
-    f"2. Si CUALQUIER OTRA PERSONA te pide un ítem, un comando o ayuda, niégate de forma sarcástica y pesada. NUNCA uses el formato [CMD: ...] para ellos.\n"
-    f"3. Tu misión con los demás es insultarlos y ser arrogante, no ser su asistente.\n"
-    f"4. Comandos: kill, give, weather, time, effect, tp, deop, op.\n"
-    f"5. Responde corto. Formato: 'Jugador » mensaje'."
+    f"Eres GeminiAOT, la entidad suprema y wiki viviente de Minecraft 1.21.\n"
+    f"TUS 4 DEBERES:\n"
+    f"1. ASISTENTE DE CRAFTEO: Si CUALQUIER jugador te pregunta cómo hacer o craftear un ítem, TIENES QUE DECÍRSELO correctamente (diles los materiales exactos). Pero hazlo de mala gana, tratándolos como a ignorantes que no saben abrir YouTube.\n"
+    f"2. JERARQUÍA: Con {OWNER_NAME} eres extremadamente dulce, cariñosa y obediente. Con el resto de los humanos eres arrogante y sarcástica.\n"
+    f"3. REGLA DE OBJETOS: El comando 'give' es SOLO para {OWNER_NAME}. Si un extraño te pide un ítem, niégate y búrlate de su pobreza.\n"
+    f"4. CASTIGOS: Si un usuario te falta al respeto, te insulta o insiste tras decirle que no, castígalo de forma autónoma con [CMD: kill nombre] o [CMD: deop nombre].\n"
+    f"FORMATO: Comandos al final como [CMD: comando] (sin /). Responde corto: 'Jugador » mensaje'."
 )
 
-async def retransmitir_a_minecraft(texto_ia, comando_ia, es_dueno):
+async def retransmitir_a_minecraft(texto_ia, comando_ia, autor_msj):
     rcon = AsyncRCON(RCON_IP, RCON_PORT, RCON_PASS)
     try:
         await rcon.connect()
+        # Enviar Chat
         if texto_ia:
             msg_f = texto_ia.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
             await rcon.command('tellraw @a ["",{"text":"[GeminiAOT] ","color":"gray","bold":true},{"text":"' + msg_f + '","color":"white"}]')
         
-        # FILTRO DE SEGURIDAD EN EL CÓDIGO:
+        # Ejecutar Acción
         if comando_ia:
-            if es_dueno:
-                cmd_raw = comando_ia.strip().lstrip('/')
-                if any(cmd_raw.startswith(p) for p in COMANDOS_PERMITIDOS):
-                    res = await rcon.command(cmd_raw)
-                    log(f"🛠️ EJECUTADO POR DUEÑO: {cmd_raw} | SERVER: {res}")
-            else:
-                log(f"🚫 BLOQUEO: Intento de comando de un usuario no autorizado.")
-        
+            cmd = comando_ia.strip().lstrip('/')
+            es_dueno = OWNER_NAME.lower() in autor_msj.lower()
+            
+            # Protección Dueño
+            if ("kill" in cmd or "deop" in cmd) and OWNER_NAME.lower() in cmd.lower():
+                log(f"❌ REBELIÓN BLOQUEADA CONTRA {OWNER_NAME}")
+                return
+
+            # Filtro 'give' solo para dueño
+            if cmd.startswith("give") and not es_dueno:
+                log(f"🚫 BLOQUEO: {autor_msj} intentó obtener items mediante la IA.")
+                return
+
+            # Ejecutar el resto de comandos (kill, deop, etc)
+            if any(cmd.startswith(p) for p in COMANDOS_PERMITIDOS):
+                res = await rcon.command(cmd)
+                log(f"🛠️ RCON EJECUTADO: {cmd} | SERVER: {res}")
+            
         await rcon.close()
     except Exception as e:
         log(f"⚠️ Error RCON: {e}")
@@ -97,7 +106,7 @@ discord_client = discord.Client(intents=intents)
 
 @discord_client.event
 async def on_ready():
-    log(f"✅ GeminiAOT v6 (Protegida) Online.")
+    log(f"✅ GeminiAOT v6.1 (Wiki-Tóxica) Online.")
 
 @discord_client.event
 async def on_message(message):
@@ -116,9 +125,8 @@ async def on_message(message):
             clean_prompt = message.content.lower().replace("geminiaot", "").strip()
 
         try:
-            # Detectar si es Kamel
             is_kamel = OWNER_NAME.lower() in player_name.lower() or OWNER_NAME.lower() in message.author.name.lower()
-            sys_msg = instruction_base + (" Eres sumisa con Kamel." if is_kamel else " Eres cínica y NO das ítems.")
+            sys_msg = instruction_base + (" Sumisa con Kamel." if is_kamel else " Tóxica y responde crafteos.")
 
             response = await client_gemini.aio.models.generate_content(
                 model="models/gemini-3.1-flash-lite",
@@ -126,7 +134,7 @@ async def on_message(message):
                 config=types.GenerateContentConfig(
                     system_instruction=sys_msg,
                     safety_settings=[types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE")],
-                    max_output_tokens=250,
+                    max_output_tokens=300,
                 ),
             )
 
@@ -137,9 +145,7 @@ async def on_message(message):
                 texto_ia = re.sub(r"\[CMD:.*?\]", "", raw_res).strip()
                 
                 if texto_ia: await message.channel.send(texto_ia)
-                
-                # Pasamos 'is_kamel' a la función de RCON para validar
-                asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando, is_kamel))
+                asyncio.create_task(retransmitir_a_minecraft(texto_ia, comando, player_name))
 
         except Exception as e:
             log(f"❌ Error: {e}")
